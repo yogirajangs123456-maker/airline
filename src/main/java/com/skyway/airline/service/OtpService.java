@@ -2,10 +2,10 @@ package com.skyway.airline.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -16,10 +16,14 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class OtpService {
 
-    private final JavaMailSender mailSender;
-
     @Value("${app.otp.expiry:10}")
     private int otpExpiryMinutes;
+
+    @Value("${brevo.api.key}")
+    private String brevoApiKey;
+
+    @Value("${brevo.sender.email}")
+    private String senderEmail;
 
     private final Map<String, OtpEntry> otpStore = new ConcurrentHashMap<>();
 
@@ -28,15 +32,45 @@ public class OtpService {
         LocalDateTime expiry = LocalDateTime.now().plusMinutes(otpExpiryMinutes);
         otpStore.put(email, new OtpEntry(otp, pnr, expiry));
 
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setTo(email);
-        message.setSubject("SkyWay Airlines — Cancellation OTP");
-        message.setText(String.format(
-                "Dear Passenger,\n\nYour OTP for cancelling ticket PNR %s is: %s\n\n" +
-                        "This OTP is valid for %d minutes.\n\nIf you did not request this, please ignore.\n\n" +
-                        "— SkyWay Airlines Team",
-                pnr, otp, otpExpiryMinutes));
-        mailSender.send(message);
+        sendEmailViaBrevo(email, otp, pnr);
+    }
+
+    private void sendEmailViaBrevo(String toEmail, String otp, String pnr) {
+        WebClient client = WebClient.create("https://api.brevo.com");
+
+        Map<String, Object> sender = Map.of(
+                "name", "SkyWay Airlines",
+                "email", senderEmail);
+
+        Map<String, Object> to = Map.of("email", toEmail);
+
+        Map<String, Object> body = Map.of(
+                "sender", sender,
+                "to", new Object[] { to },
+                "subject", "SkyWay Airlines — Cancellation OTP",
+                "htmlContent", String.format(
+                        "<p>Dear Passenger,</p>" +
+                                "<p>Your OTP for cancelling ticket PNR <b>%s</b> is: <b>%s</b></p>" +
+                                "<p>This OTP is valid for %d minutes.</p>" +
+                                "<p>If you did not request this, please ignore.</p>" +
+                                "<p>— SkyWay Airlines Team</p>",
+                        pnr, otp, otpExpiryMinutes));
+
+        try {
+            client.post()
+                    .uri("/v3/smtp/email")
+                    .header("api-key", brevoApiKey)
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .header("Accept", MediaType.APPLICATION_JSON_VALUE)
+                    .bodyValue(body)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            System.out.println("OTP EMAIL SENT VIA BREVO TO: " + toEmail);
+        } catch (Exception e) {
+            System.out.println("BREVO EMAIL FAILED: " + e.getMessage());
+            throw new RuntimeException("Failed to send OTP email: " + e.getMessage());
+        }
     }
 
     public boolean verifyOTP(String email, String otp) {
@@ -53,7 +87,6 @@ public class OtpService {
         return valid;
     }
 
-    // Bug #8: map was never cleaned — expired entries leaked indefinitely
     @Scheduled(fixedDelay = 60_000)
     public void cleanExpiredOtps() {
         LocalDateTime now = LocalDateTime.now();
