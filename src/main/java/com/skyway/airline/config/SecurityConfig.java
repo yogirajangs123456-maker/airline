@@ -29,98 +29,101 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final AuthService authService;
+        private final AuthService authService;
 
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        @Bean
+        public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
-        http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(csrf -> csrf.disable())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        // Public APIs
-                        .requestMatchers(
-                                "/api/auth/**",
-                                "/api/flights/**",
-                                "/api/otp/**")
-                        .permitAll()
-                        // Everything else requires login
-                        .anyRequest().authenticated())
-                .addFilterBefore(jwtFilter(),
-                        UsernamePasswordAuthenticationFilter.class);
+                http
+                                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                                .csrf(csrf -> csrf.disable())
+                                .sessionManagement(session -> session
+                                                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                                .authorizeHttpRequests(auth -> auth
+                                                // Public APIs
+                                                .requestMatchers(
+                                                                "/api/auth/**",
+                                                                "/api/flights/**")
+                                                .permitAll()
+                                                // OTP send/cancel needs login (uses email from token)
+                                                .requestMatchers("/api/otp/**").authenticated()
+                                                .requestMatchers("/api/reservations/**").authenticated()
+                                                // Everything else requires login
+                                                .anyRequest().authenticated())
+                                .addFilterBefore(jwtFilter(),
+                                                UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
+                return http.build();
+        }
 
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
+        @Bean
+        public CorsConfigurationSource corsConfigurationSource() {
+                CorsConfiguration configuration = new CorsConfiguration();
 
-        // Allow localhost for development + Vercel for production
-        configuration.setAllowedOrigins(Arrays.asList(
-                "http://localhost:3000",
-                "http://localhost:5173"));
+                configuration.setAllowedOrigins(Arrays.asList(
+                                "http://localhost:3000",
+                                "http://localhost:5173"));
 
-        // Also allow all Vercel preview URLs
-        configuration.setAllowedOriginPatterns(Arrays.asList(
-                "https://*.vercel.app",
-                "https://*.railway.app"));
+                configuration.setAllowedOriginPatterns(Arrays.asList(
+                                "https://*.vercel.app",
+                                "https://*.railway.app"));
 
-        configuration.setAllowedMethods(Arrays.asList(
-                "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+                configuration.setAllowedMethods(Arrays.asList(
+                                "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
 
-        configuration.setAllowedHeaders(Arrays.asList(
-                "Authorization",
-                "Content-Type",
-                "Accept",
-                "Origin",
-                "X-Requested-With"));
+                configuration.setAllowedHeaders(Arrays.asList(
+                                "Authorization",
+                                "Content-Type",
+                                "Accept",
+                                "Origin",
+                                "X-Requested-With"));
 
-        configuration.setAllowCredentials(true);
-        configuration.setMaxAge(3600L);
+                configuration.setAllowCredentials(true);
+                configuration.setMaxAge(3600L);
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
-    }
+                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+                source.registerCorsConfiguration("/**", configuration);
+                return source;
+        }
 
-    @Bean
-    public OncePerRequestFilter jwtFilter() {
+        @Bean
+        public OncePerRequestFilter jwtFilter() {
 
-        return new OncePerRequestFilter() {
+                return new OncePerRequestFilter() {
 
-            @Override
-            protected void doFilterInternal(
-                    HttpServletRequest request,
-                    HttpServletResponse response,
-                    FilterChain filterChain)
-                    throws ServletException, IOException {
+                        @Override
+                        protected void doFilterInternal(
+                                        HttpServletRequest request,
+                                        HttpServletResponse response,
+                                        FilterChain filterChain)
+                                        throws ServletException, IOException {
 
-                String header = request.getHeader("Authorization");
+                                String header = request.getHeader("Authorization");
 
-                if (header != null && header.startsWith("Bearer ")) {
+                                if (header != null && header.startsWith("Bearer ")) {
 
-                    try {
+                                        try {
 
-                        String token = header.substring(7);
-                        String email = authService.extractEmail(token);
+                                                String token = header.substring(7);
+                                                String email = authService.extractEmail(token);
 
-                        UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                                email,
-                                null,
-                                List.of());
+                                                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                                                                email,
+                                                                null,
+                                                                List.of(() -> "ROLE_USER"));
 
-                        SecurityContextHolder.getContext()
-                                .setAuthentication(authentication);
+                                                SecurityContextHolder.getContext()
+                                                                .setAuthentication(authentication);
 
-                    } catch (Exception ignored) {
-                        // Invalid token — just continue without authentication
-                    }
-                }
+                                        } catch (Exception e) {
+                                                // LOG the real reason instead of silently swallowing it
+                                                System.out.println("JWT VALIDATION FAILED: " + e.getClass().getName()
+                                                                + " - " + e.getMessage());
+                                        }
+                                }
 
-                filterChain.doFilter(request, response);
-            }
-        };
-    }
+                                filterChain.doFilter(request, response);
+                        }
+                };
+        }
 }
