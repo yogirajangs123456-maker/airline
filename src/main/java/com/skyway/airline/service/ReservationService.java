@@ -104,14 +104,17 @@ public class ReservationService {
         return reservationRepository.save(reservation);
     }
 
+    @Transactional(readOnly = true)
     public List<String> getBookedSeats(Long flightId) {
         return reservationRepository.findBookedSeatsByFlightId(flightId);
     }
 
+    @Transactional(readOnly = true)
     public List<Reservation> getUserReservations(String email) {
         return reservationRepository.findByUser_Email(email);
     }
 
+    @Transactional(readOnly = true)
     public Reservation getReservationByPnr(String pnr, String userEmail) {
 
         Reservation reservation = reservationRepository.findByPnr(pnr)
