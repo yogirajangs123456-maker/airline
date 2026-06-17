@@ -115,14 +115,15 @@ public class ReservationService {
     }
 
     @Transactional(readOnly = true)
-    public Reservation getReservationByPnr(String pnr, String userEmail) {
-
+    public Reservation getReservationByPnr(String pnr, String email) {
         Reservation reservation = reservationRepository.findByPnr(pnr)
-                .orElseThrow(() -> new RuntimeException("PNR not found"));
+                .orElseThrow(() -> new RuntimeException("PNR not found!"));
 
-        if (!reservation.getUser().getEmail().equals(userEmail)) {
-            throw new RuntimeException("This ticket does not belong to your account.");
-        }
+        if (!reservation.getUser().getEmail().equals(email))
+            throw new RuntimeException("This PNR does not belong to your account.");
+
+        // Force-initialize lazy Flight proxy while the session is still open
+        reservation.getFlight().getSource();
 
         return reservation;
     }
