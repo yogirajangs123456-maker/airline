@@ -111,7 +111,16 @@ public class ReservationService {
 
     @Transactional(readOnly = true)
     public List<Reservation> getUserReservations(String email) {
-        return reservationRepository.findByUser_Email(email);
+        List<Reservation> reservations = reservationRepository.findByUser_Email(email);
+        // Force-initialize lazy User and Flight proxies while the session is still
+        // open,
+        // otherwise Jackson crashes trying to serialize them after the transaction
+        // closes
+        reservations.forEach(r -> {
+            r.getUser().getEmail();
+            r.getFlight().getSource();
+        });
+        return reservations;
     }
 
     @Transactional(readOnly = true)
