@@ -15,31 +15,41 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class FlightController {
 
-    private final FlightRepository flightRepository;
-    // Bug #1: these were injected as method parameters (null at runtime) — moved to
-    // fields
-    private final ReservationService reservationService;
-    private final SeatLockService seatLockService;
+        private final FlightRepository flightRepository;
+        // Bug #1: these were injected as method parameters (null at runtime) — moved to
+        // fields
+        private final ReservationService reservationService;
+        private final SeatLockService seatLockService;
 
-    @GetMapping("/search")
-    public List<?> search(
-            @RequestParam String source,
-            @RequestParam String destination,
-            @RequestParam(required = false) String date) {
-        if (date != null) {
-            return flightRepository
-                    .findBySourceIgnoreCaseAndDestinationIgnoreCaseAndJourneyDateAndActiveTrue(
-                            source, destination, LocalDate.parse(date));
+        @GetMapping("/search")
+        public List<?> search(
+                        @RequestParam String source,
+                        @RequestParam String destination,
+                        @RequestParam(required = false) String date) {
+
+                String src = source.trim();
+                String dest = destination.trim();
+
+                if (date != null) {
+                        return flightRepository
+                                        .findBySourceIgnoreCaseAndDestinationIgnoreCaseAndJourneyDateAndActiveTrue(
+                                                        src, dest, LocalDate.parse(date));
+                }
+                return flightRepository
+                                .findBySourceIgnoreCaseContainingAndDestinationIgnoreCaseContainingAndActiveTrue(
+                                                src, dest);
         }
-        return flightRepository
-                .findBySourceIgnoreCaseContainingAndDestinationIgnoreCaseContainingAndActiveTrue(
-                        source, destination);
-    }
 
-    @GetMapping("/{id}/seats")
-    public Map<String, List<String>> getSeats(@PathVariable Long id) {
-        return Map.of(
-                "booked", reservationService.getBookedSeats(id),
-                "locked", seatLockService.getLockedSeats(id));
-    }
+        @GetMapping("/{id}/seats")
+        public Map<String, List<String>> getSeats(@PathVariable Long id) {
+                return Map.of(
+                                "booked", reservationService.getBookedSeats(id),
+                                "locked", seatLockService.getLockedSeats(id));
+        }
+
+        @GetMapping("/cities")
+        public List<String> getCities() {
+                return flightRepository.findDistinctCities();
+        }
+
 }

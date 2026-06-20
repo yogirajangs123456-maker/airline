@@ -14,7 +14,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-
 import java.util.Map;
 
 @RestController
@@ -36,8 +35,7 @@ public class ReservationController {
     }
 
     @PostMapping("/lock-seat")
-    public ResponseEntity<?> lockSeat(@RequestBody Map<String, Object> body,
-            HttpServletRequest req) {
+    public ResponseEntity<?> lockSeat(@RequestBody Map<String, Object> body, HttpServletRequest req) {
         String email = getEmailFromHeader(req);
         Long flightId = Long.parseLong(body.get("flightId").toString());
         String seatNum = body.get("seatNumber").toString();
@@ -52,15 +50,15 @@ public class ReservationController {
     }
 
     @PostMapping
-    public ResponseEntity<?> book(@RequestBody BookingRequest req,
-            HttpServletRequest request) {
+    public ResponseEntity<?> book(@RequestBody BookingRequest req, HttpServletRequest request) {
         try {
             String email = getEmailFromHeader(request);
             Reservation reservation = reservationService.createReservation(req, email);
             return ResponseEntity.ok(Map.of(
                     "pnr", reservation.getPnr(),
                     "message", "Booking confirmed!",
-                    "reservationId", reservation.getReservationId()));
+                    "reservationId", reservation.getReservationId(),
+                    "passengerCount", reservation.getPassengers().size()));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -72,17 +70,20 @@ public class ReservationController {
         return ResponseEntity.ok(reservationService.getUserReservations(email));
     }
 
-    /** Download ticket PDF by PNR */
+    @GetMapping("/{pnr}")
+    public ResponseEntity<?> getByPnr(@PathVariable String pnr, HttpServletRequest req) {
+        String email = getEmailFromHeader(req);
+        return ResponseEntity.ok(reservationService.getReservationByPnr(pnr, email));
+    }
+
     @GetMapping("/{pnr}/ticket")
-    public ResponseEntity<byte[]> downloadTicket(@PathVariable String pnr,
-            HttpServletRequest req) {
+    public ResponseEntity<byte[]> downloadTicket(@PathVariable String pnr, HttpServletRequest req) {
         String email = getEmailFromHeader(req);
         Reservation reservation = reservationService.getReservationByPnr(pnr, email);
         byte[] pdf = pdfService.generateTicket(reservation);
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"ticket-" + pnr + ".pdf\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"ticket-" + pnr + ".pdf\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
     }

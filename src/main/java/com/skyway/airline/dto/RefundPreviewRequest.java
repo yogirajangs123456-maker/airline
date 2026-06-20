@@ -4,8 +4,7 @@ import lombok.Data;
 import java.util.List;
 
 @Data
-public class CancelRequest {
+public class RefundPreviewRequest {
     private String pnr;
-    private String otp;
     private List<Long> passengerIds;
 }

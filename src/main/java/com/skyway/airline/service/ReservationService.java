@@ -8,7 +8,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,9 +19,13 @@ import java.util.UUID;
 public class ReservationService {
 
     private final ReservationRepository reservationRepository;
+    private final PassengerRepository passengerRepository;
     private final FlightRepository flightRepository;
     private final UserRepository userRepository;
     private final SeatLockService seatLockService;
+    private final EmailService emailService;
+
+    private static final int MAX_PASSENGERS_PER_BOOKING = 6;
 
     private String generatePNR() {
         return "PNR" + UUID.randomUUID().toString().toUpperCase().replace("-", "").substring(0, 6);
@@ -34,18 +40,45 @@ public class ReservationService {
         Flight flight = flightRepository.findById(req.getFlightId())
                 .orElseThrow(() -> new RuntimeException("Flight not found"));
 
-        boolean alreadyBooked = reservationRepository
-                .existsByFlight_FlightIdAndSeatNumberAndStatus(
-                        req.getFlightId(), req.getSeatNumber(), "CONFIRMED");
-        if (alreadyBooked)
-            throw new RuntimeException("Seat already booked!");
+        List<BookingRequest.PassengerSeatRequest> passengerReqs = req.getPassengers();
 
-        boolean hasLock = seatLockService.acquireLock(
-                req.getFlightId(), req.getSeatNumber(), user.getId());
-        if (!hasLock)
-            throw new RuntimeException("Seat is held by another user. Please choose a different seat.");
+        if (passengerReqs == null || passengerReqs.isEmpty())
+            throw new RuntimeException("At least one passenger is required.");
 
-        // Bug #11: was an unbounded do-while loop — added retry cap
+        if (passengerReqs.size() > MAX_PASSENGERS_PER_BOOKING)
+            throw new RuntimeException("Maximum " + MAX_PASSENGERS_PER_BOOKING + " passengers allowed per booking.");
+
+        // Validate seats are unique within this request
+        List<String> requestedSeats = passengerReqs.stream()
+                .map(BookingRequest.PassengerSeatRequest::getSeatNumber)
+                .toList();
+        if (requestedSeats.stream().distinct().count() != requestedSeats.size())
+            throw new RuntimeException("Duplicate seat numbers in the same booking are not allowed.");
+
+        // Validate none of the requested seats are already confirmed-booked on this
+        // flight
+        List<String> alreadyBooked = passengerRepository.findBookedSeatsByFlightId(req.getFlightId());
+        for (String seat : requestedSeats) {
+            if (alreadyBooked.contains(seat))
+                throw new RuntimeException("Seat " + seat + " is already booked!");
+        }
+
+        // Acquire locks for every requested seat — all or nothing
+        List<String> lockedSoFar = new ArrayList<>();
+        for (String seat : requestedSeats) {
+            boolean hasLock = seatLockService.acquireLock(req.getFlightId(), seat, user.getId());
+            if (!hasLock) {
+                // Roll back any locks already acquired in this loop
+                lockedSoFar.forEach(s -> seatLockService.releaseLock(req.getFlightId(), s));
+                throw new RuntimeException(
+                        "Seat " + seat + " is held by another user. Please choose a different seat.");
+            }
+            lockedSoFar.add(seat);
+        }
+
+        if (flight.getAvailableSeats() < passengerReqs.size())
+            throw new RuntimeException("Not enough available seats on this flight.");
+
         String pnr = null;
         for (int i = 0; i < 10; i++) {
             String candidate = generatePNR();
@@ -61,65 +94,114 @@ public class ReservationService {
                 .pnr(pnr)
                 .user(user)
                 .flight(flight)
-                .seatNumber(req.getSeatNumber())
-                .passengerName(req.getPassengerName())
                 .totalPrice(req.getTotalPrice())
-                .status("CONFIRMED")
                 .bookedAt(LocalDateTime.now())
                 .build();
 
-        Reservation saved;
+        Reservation savedReservation;
         try {
-            saved = reservationRepository.save(reservation);
+            savedReservation = reservationRepository.save(reservation);
         } catch (DataIntegrityViolationException e) {
-            // Bug #7: catch duplicate seat race — DB unique constraint fires here
-            throw new RuntimeException("Seat was just booked by another user. Please choose a different seat.");
+            lockedSoFar.forEach(s -> seatLockService.releaseLock(req.getFlightId(), s));
+            throw new RuntimeException("Could not create booking. Please try again.");
         }
 
-        flight.setAvailableSeats(flight.getAvailableSeats() - 1);
+        List<Passenger> passengers = new ArrayList<>();
+        for (BookingRequest.PassengerSeatRequest p : passengerReqs) {
+            passengers.add(Passenger.builder()
+                    .reservation(savedReservation)
+                    .passengerName(p.getPassengerName())
+                    .seatNumber(p.getSeatNumber())
+                    .status("CONFIRMED")
+                    .build());
+        }
+        passengerRepository.saveAll(passengers);
+        savedReservation.setPassengers(passengers);
+
+        flight.setAvailableSeats(flight.getAvailableSeats() - passengerReqs.size());
         flightRepository.save(flight);
 
-        seatLockService.releaseLock(req.getFlightId(), req.getSeatNumber());
-        return saved;
+        lockedSoFar.forEach(s -> seatLockService.releaseLock(req.getFlightId(), s));
+
+        emailService.sendBookingConfirmation(savedReservation);
+
+        return savedReservation;
     }
 
     @Transactional
-    public Reservation cancelReservation(String pnr, String userEmail) {
+    public Reservation cancelPassengers(String pnr, List<Long> passengerIds, String userEmail) {
         Reservation reservation = reservationRepository.findByPnr(pnr)
                 .orElseThrow(() -> new RuntimeException("PNR not found!"));
 
         if (!reservation.getUser().getEmail().equals(userEmail))
             throw new RuntimeException("This PNR does not belong to your account.");
 
-        if ("CANCELLED".equals(reservation.getStatus()))
-            throw new RuntimeException("This ticket is already cancelled.");
+        List<Passenger> targetPassengers = reservation.getPassengers().stream()
+                .filter(p -> passengerIds.contains(p.getPassengerId()))
+                .toList();
 
-        reservation.setStatus("CANCELLED");
-        reservation.setCancelledAt(LocalDateTime.now());
+        if (targetPassengers.isEmpty())
+            throw new RuntimeException("No matching passengers found for cancellation.");
 
+        BigDecimal perSeatPrice = reservation.getTotalPrice()
+                .divide(BigDecimal.valueOf(reservation.getPassengers().size()), 2, java.math.RoundingMode.HALF_UP);
+
+        BigDecimal newlyRefunded = BigDecimal.ZERO;
         Flight flight = reservation.getFlight();
-        flight.setAvailableSeats(flight.getAvailableSeats() + 1);
+
+        for (Passenger p : targetPassengers) {
+            if ("CANCELLED".equals(p.getStatus()))
+                continue; // already cancelled, skip silently
+            p.setStatus("CANCELLED");
+            newlyRefunded = newlyRefunded.add(perSeatPrice);
+            flight.setAvailableSeats(flight.getAvailableSeats() + 1);
+        }
+
+        passengerRepository.saveAll(targetPassengers);
         flightRepository.save(flight);
 
-        return reservationRepository.save(reservation);
+        reservation.setRefundAmount(reservation.getRefundAmount().add(newlyRefunded));
+
+        boolean allCancelled = reservation.getPassengers().stream()
+                .allMatch(p -> "CANCELLED".equals(p.getStatus()));
+        if (allCancelled) {
+            reservation.setCancelledAt(LocalDateTime.now());
+        }
+
+        Reservation saved = reservationRepository.save(reservation);
+
+        emailService.sendCancellationConfirmation(saved, targetPassengers, newlyRefunded);
+
+        return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public BigDecimal calculateRefundPreview(String pnr, List<Long> passengerIds, String userEmail) {
+        Reservation reservation = reservationRepository.findByPnr(pnr)
+                .orElseThrow(() -> new RuntimeException("PNR not found!"));
+
+        if (!reservation.getUser().getEmail().equals(userEmail))
+            throw new RuntimeException("This PNR does not belong to your account.");
+
+        BigDecimal perSeatPrice = reservation.getTotalPrice()
+                .divide(BigDecimal.valueOf(reservation.getPassengers().size()), 2, java.math.RoundingMode.HALF_UP);
+
+        long eligibleCount = reservation.getPassengers().stream()
+                .filter(p -> passengerIds.contains(p.getPassengerId()) && "CONFIRMED".equals(p.getStatus()))
+                .count();
+
+        return perSeatPrice.multiply(BigDecimal.valueOf(eligibleCount));
     }
 
     @Transactional(readOnly = true)
     public List<String> getBookedSeats(Long flightId) {
-        return reservationRepository.findBookedSeatsByFlightId(flightId);
+        return passengerRepository.findBookedSeatsByFlightId(flightId);
     }
 
     @Transactional(readOnly = true)
     public List<Reservation> getUserReservations(String email) {
         List<Reservation> reservations = reservationRepository.findByUser_Email(email);
-        // Force-initialize lazy User and Flight proxies while the session is still
-        // open,
-        // otherwise Jackson crashes trying to serialize them after the transaction
-        // closes
-        reservations.forEach(r -> {
-            r.getUser().getEmail();
-            r.getFlight().getSource();
-        });
+        reservations.forEach(this::forceLoadLazyFields);
         return reservations;
     }
 
@@ -131,9 +213,13 @@ public class ReservationService {
         if (!reservation.getUser().getEmail().equals(email))
             throw new RuntimeException("This PNR does not belong to your account.");
 
-        // Force-initialize lazy Flight proxy while the session is still open
-        reservation.getFlight().getSource();
-
+        forceLoadLazyFields(reservation);
         return reservation;
+    }
+
+    private void forceLoadLazyFields(Reservation r) {
+        r.getUser().getEmail();
+        r.getFlight().getSource();
+        r.getPassengers().forEach(p -> p.getStatus());
     }
 }
