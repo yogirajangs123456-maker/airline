@@ -19,16 +19,19 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
         @Query("SELECT COUNT(r) FROM Reservation r WHERE r.bookedAt >= :start AND r.bookedAt < :end")
         long countBookingsBetween(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
-        // ── Admin search — every filter optional ──
+        // Required by AdminReservationController.getAll()
+        List<Reservation> findAllByOrderByBookedAtDesc();
+
+        // Required by AdminReservationController.search()
+        // All filters are optional — pass null for any filter you don't want applied.
         @Query("SELECT DISTINCT r FROM Reservation r " +
                         "LEFT JOIN r.passengers p " +
-                        "WHERE (:pnr IS NULL OR LOWER(r.pnr) LIKE LOWER(CONCAT('%', :pnr, '%'))) AND " +
-                        "(:passengerName IS NULL OR LOWER(p.passengerName) LIKE LOWER(CONCAT('%', :passengerName, '%'))) AND "
+                        "WHERE (:pnr IS NULL OR r.pnr = :pnr) " +
+                        "AND (:passengerName IS NULL OR LOWER(p.passengerName) LIKE LOWER(CONCAT('%', :passengerName, '%'))) "
                         +
-                        "(:flightNumber IS NULL OR LOWER(r.flight.flightNumber) LIKE LOWER(CONCAT('%', :flightNumber, '%'))) AND "
-                        +
-                        "(:email IS NULL OR LOWER(r.user.email) LIKE LOWER(CONCAT('%', :email, '%'))) AND " +
-                        "(:bookingDate IS NULL OR CAST(r.bookedAt AS date) = :bookingDate) " +
+                        "AND (:flightNumber IS NULL OR r.flight.flightNumber = :flightNumber) " +
+                        "AND (:email IS NULL OR r.user.email = :email) " +
+                        "AND (:bookingDate IS NULL OR FUNCTION('DATE', r.bookedAt) = :bookingDate) " +
                         "ORDER BY r.bookedAt DESC")
         List<Reservation> adminSearch(
                         @Param("pnr") String pnr,
@@ -36,6 +39,4 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
                         @Param("flightNumber") String flightNumber,
                         @Param("email") String email,
                         @Param("bookingDate") LocalDate bookingDate);
-
-        List<Reservation> findAllByOrderByBookedAtDesc();
 }
