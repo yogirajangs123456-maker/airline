@@ -26,6 +26,10 @@ public class User {
     private String password;
 
     @Column(name = "created_at")
-    @Builder.Default // ← fix: @Builder ignores plain initializers
+    @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    @Builder.Default
+    @Column(nullable = false)
+    private String role = "ROLE_USER";
 }

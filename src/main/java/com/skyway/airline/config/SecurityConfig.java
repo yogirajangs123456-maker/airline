@@ -12,6 +12,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -45,6 +46,10 @@ public class SecurityConfig {
                                                                 "/api/auth/**",
                                                                 "/api/flights/**")
                                                 .permitAll()
+                                                // Admin login is public (credentials checked inside the controller)
+                                                .requestMatchers("/api/admin/auth/login").permitAll()
+                                                // Everything else under /api/admin/** requires ROLE_ADMIN
+                                                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                                                 // OTP send/cancel needs login (uses email from token)
                                                 .requestMatchers("/api/otp/**").authenticated()
                                                 .requestMatchers("/api/reservations/**").authenticated()
@@ -106,17 +111,17 @@ public class SecurityConfig {
 
                                                 String token = header.substring(7);
                                                 String email = authService.extractEmail(token);
+                                                String role = authService.extractRole(token);
 
                                                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                                                                 email,
                                                                 null,
-                                                                List.of(() -> "ROLE_USER"));
+                                                                List.of(new SimpleGrantedAuthority(role)));
 
                                                 SecurityContextHolder.getContext()
                                                                 .setAuthentication(authentication);
 
                                         } catch (Exception e) {
-                                                // LOG the real reason instead of silently swallowing it
                                                 System.out.println("JWT VALIDATION FAILED: " + e.getClass().getName()
                                                                 + " - " + e.getMessage());
                                         }

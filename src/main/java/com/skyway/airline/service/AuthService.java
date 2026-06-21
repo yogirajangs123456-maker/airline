@@ -34,47 +34,77 @@ public class AuthService {
         }
 
         User user = User.builder()
-            .name(req.getName())
-            .email(req.getEmail())
-            .password(passwordEncoder.encode(req.getPassword()))
-            .build();
+                .name(req.getName())
+                .email(req.getEmail())
+                .password(passwordEncoder.encode(req.getPassword()))
+                .role("ROLE_USER")
+                .build();
 
         User saved = userRepository.save(user);
-        String token = generateToken(saved.getEmail());
+        String token = generateToken(saved.getEmail(), saved.getRole());
 
         return Map.of(
-            "token", token,
-            "user", Map.of("id", saved.getId(), "name", saved.getName(), "email", saved.getEmail())
-        );
+                "token", token,
+                "user", Map.of("id", saved.getId(), "name", saved.getName(), "email", saved.getEmail()));
     }
 
     public Map<String, Object> login(LoginRequest req) {
         User user = userRepository.findByEmail(req.getEmail())
-            .orElseThrow(() -> new RuntimeException("Invalid email or password"));
+                .orElseThrow(() -> new RuntimeException("Invalid email or password"));
 
         if (!passwordEncoder.matches(req.getPassword(), user.getPassword())) {
             throw new RuntimeException("Invalid email or password");
         }
 
-        String token = generateToken(user.getEmail());
+        String token = generateToken(user.getEmail(), user.getRole());
         return Map.of(
-            "token", token,
-            "user", Map.of("id", user.getId(), "name", user.getName(), "email", user.getEmail())
-        );
+                "token", token,
+                "user", Map.of("id", user.getId(), "name", user.getName(), "email", user.getEmail()));
     }
 
-    private String generateToken(String email) {
+    /**
+     * Admin-specific login — same credentials check as login(), but
+     * REJECTS the request if the account is not ROLE_ADMIN.
+     */
+    public Map<String, Object> adminLogin(LoginRequest req) {
+        User user = userRepository.findByEmail(req.getEmail())
+                .orElseThrow(() -> new RuntimeException("Invalid email or password"));
+
+        if (!passwordEncoder.matches(req.getPassword(), user.getPassword())) {
+            throw new RuntimeException("Invalid email or password");
+        }
+
+        if (!"ROLE_ADMIN".equals(user.getRole())) {
+            throw new RuntimeException("This account does not have admin access.");
+        }
+
+        String token = generateToken(user.getEmail(), user.getRole());
+        return Map.of(
+                "token", token,
+                "user",
+                Map.of("id", user.getId(), "name", user.getName(), "email", user.getEmail(), "role", user.getRole()));
+    }
+
+    private String generateToken(String email, String role) {
         SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
         return Jwts.builder()
-            .subject(email)
-            .issuedAt(new Date())
-            .expiration(new Date(System.currentTimeMillis() + jwtExpiration))
-            .signWith(key)
-            .compact();
+                .subject(email)
+                .claim("role", role)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + jwtExpiration))
+                .signWith(key)
+                .compact();
     }
 
     public String extractEmail(String token) {
         SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
         return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload().getSubject();
+    }
+
+    public String extractRole(String token) {
+        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+        Object role = Jwts.parser().verifyWith(key).build()
+                .parseSignedClaims(token).getPayload().get("role");
+        return role != null ? role.toString() : "ROLE_USER";
     }
 }
