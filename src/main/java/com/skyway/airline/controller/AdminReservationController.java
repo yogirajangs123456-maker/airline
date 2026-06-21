@@ -3,6 +3,7 @@ package com.skyway.airline.controller;
 import com.skyway.airline.entity.Reservation;
 import com.skyway.airline.repository.ReservationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -16,6 +17,7 @@ public class AdminReservationController {
     private final ReservationRepository reservationRepository;
 
     @GetMapping
+    @Transactional(readOnly = true)
     public List<Reservation> getAll() {
         List<Reservation> reservations = reservationRepository.findAllByOrderByBookedAtDesc();
         reservations.forEach(this::forceLoadLazyFields);
@@ -23,6 +25,7 @@ public class AdminReservationController {
     }
 
     @GetMapping("/search")
+    @Transactional(readOnly = true)
     public List<Reservation> search(
             @RequestParam(required = false) String pnr,
             @RequestParam(required = false) String passengerName,
