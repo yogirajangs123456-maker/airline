@@ -3,15 +3,13 @@ package com.skyway.airline.repository;
 import com.skyway.airline.entity.Flight;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
 
 public interface FlightRepository extends JpaRepository<Flight, Long> {
 
-        // Bug #9 cascades: was "IsActiveTrue" — still works since the field is now
-        // "active"
-        // and Spring Data derives isActive() from the boolean field correctly
         List<Flight> findBySourceIgnoreCaseAndDestinationIgnoreCaseAndJourneyDateAndActiveTrue(
                         String source, String destination, LocalDate journeyDate);
 
@@ -22,4 +20,19 @@ public interface FlightRepository extends JpaRepository<Flight, Long> {
                         "UNION " +
                         "SELECT DISTINCT destination FROM flights WHERE active = true", nativeQuery = true)
         List<String> findDistinctCities();
+
+        // ── Admin search — every filter optional ──
+        @Query("SELECT f FROM Flight f WHERE " +
+                        "(:source IS NULL OR LOWER(f.source) LIKE LOWER(CONCAT('%', :source, '%'))) AND " +
+                        "(:destination IS NULL OR LOWER(f.destination) LIKE LOWER(CONCAT('%', :destination, '%'))) AND "
+                        +
+                        "(:date IS NULL OR f.journeyDate = :date) AND " +
+                        "(:flightNumber IS NULL OR LOWER(f.flightNumber) LIKE LOWER(CONCAT('%', :flightNumber, '%'))) "
+                        +
+                        "ORDER BY f.journeyDate DESC, f.departureTime ASC")
+        List<Flight> adminSearch(
+                        @Param("source") String source,
+                        @Param("destination") String destination,
+                        @Param("date") LocalDate date,
+                        @Param("flightNumber") String flightNumber);
 }
