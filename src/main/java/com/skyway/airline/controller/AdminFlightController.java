@@ -48,7 +48,7 @@ public class AdminFlightController {
                 .destination(req.getDestination())
                 .departureTime(req.getDepartureTime())
                 .arrivalTime(req.getArrivalTime())
-                .journeyDate(req.getJourneyDate())
+                .travelDate(req.getJourneyDate())
                 .price(req.getPrice())
                 .totalSeats(req.getTotalSeats())
                 .availableSeats(req.getTotalSeats())

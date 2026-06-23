@@ -21,7 +21,6 @@ public interface FlightRepository extends JpaRepository<Flight, Long> {
                         "SELECT DISTINCT destination FROM flights WHERE active = true", nativeQuery = true)
         List<String> findDistinctCities();
 
-        // ── Admin search — every filter optional ──
         @Query("SELECT f FROM Flight f WHERE " +
                         "(:source IS NULL OR LOWER(f.source) LIKE LOWER(CONCAT('%', :source, '%'))) AND " +
                         "(:destination IS NULL OR LOWER(f.destination) LIKE LOWER(CONCAT('%', :destination, '%'))) AND "
@@ -35,4 +34,16 @@ public interface FlightRepository extends JpaRepository<Flight, Long> {
                         @Param("destination") String destination,
                         @Param("date") LocalDate date,
                         @Param("flightNumber") String flightNumber);
+
+        // NEW — for duplicate prevention during generation
+        boolean existsByFlightNumberAndJourneyDate(String flightNumber, LocalDate journeyDate);
+
+        // NEW — for "Generated Flights" admin page (only template-generated ones)
+        List<Flight> findByTemplateIdIsNotNullOrderByJourneyDateDesc();
+
+        // NEW — for Automation Dashboard counts
+        long countByTemplateIdIsNotNull();
+
+        @Query("SELECT COUNT(f) FROM Flight f WHERE f.templateId IS NOT NULL AND f.journeyDate = :today")
+        long countGeneratedToday(@Param("today") LocalDate today);
 }

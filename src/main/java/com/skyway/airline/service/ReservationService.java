@@ -40,6 +40,13 @@ public class ReservationService {
         Flight flight = flightRepository.findById(req.getFlightId())
                 .orElseThrow(() -> new RuntimeException("Flight not found"));
 
+        // ── ADDED: block booking if flight is not in a bookable status ────────
+        if (!flight.isBookable()) {
+            throw new RuntimeException(
+                    "This flight is no longer available for booking (status: " + flight.getStatus() + ").");
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         List<BookingRequest.PassengerSeatRequest> passengerReqs = req.getPassengers();
 
         if (passengerReqs == null || passengerReqs.isEmpty())
@@ -48,27 +55,22 @@ public class ReservationService {
         if (passengerReqs.size() > MAX_PASSENGERS_PER_BOOKING)
             throw new RuntimeException("Maximum " + MAX_PASSENGERS_PER_BOOKING + " passengers allowed per booking.");
 
-        // Validate seats are unique within this request
         List<String> requestedSeats = passengerReqs.stream()
                 .map(BookingRequest.PassengerSeatRequest::getSeatNumber)
                 .toList();
         if (requestedSeats.stream().distinct().count() != requestedSeats.size())
             throw new RuntimeException("Duplicate seat numbers in the same booking are not allowed.");
 
-        // Validate none of the requested seats are already confirmed-booked on this
-        // flight
         List<String> alreadyBooked = passengerRepository.findBookedSeatsByFlightId(req.getFlightId());
         for (String seat : requestedSeats) {
             if (alreadyBooked.contains(seat))
                 throw new RuntimeException("Seat " + seat + " is already booked!");
         }
 
-        // Acquire locks for every requested seat — all or nothing
         List<String> lockedSoFar = new ArrayList<>();
         for (String seat : requestedSeats) {
             boolean hasLock = seatLockService.acquireLock(req.getFlightId(), seat, user.getId());
             if (!hasLock) {
-                // Roll back any locks already acquired in this loop
                 lockedSoFar.forEach(s -> seatLockService.releaseLock(req.getFlightId(), s));
                 throw new RuntimeException(
                         "Seat " + seat + " is held by another user. Please choose a different seat.");
@@ -151,7 +153,7 @@ public class ReservationService {
 
         for (Passenger p : targetPassengers) {
             if ("CANCELLED".equals(p.getStatus()))
-                continue; // already cancelled, skip silently
+                continue;
             p.setStatus("CANCELLED");
             newlyRefunded = newlyRefunded.add(perSeatPrice);
             flight.setAvailableSeats(flight.getAvailableSeats() + 1);
