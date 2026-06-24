@@ -2,8 +2,10 @@ package com.skyway.airline.service;
 
 import com.skyway.airline.entity.Flight;
 import com.skyway.airline.entity.FlightTemplate;
+import com.skyway.airline.entity.GenerationSettings;
 import com.skyway.airline.repository.FlightRepository;
 import com.skyway.airline.repository.FlightTemplateRepository;
+import com.skyway.airline.repository.GenerationSettingsRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -14,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.TextStyle;
 import java.util.List;
 import java.util.Locale;
@@ -25,8 +28,7 @@ public class FlightGenerationService {
 
     private final FlightTemplateRepository flightTemplateRepository;
     private final FlightRepository flightRepository;
-
-    private static final int BOOKING_WINDOW_DAYS = 30;
+    private final GenerationSettingsRepository generationSettingsRepository;
 
     private static final Set<DayOfWeek> WEEKDAYS = Set.of(
             DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
@@ -35,17 +37,14 @@ public class FlightGenerationService {
     private static final Set<DayOfWeek> WEEKENDS = Set.of(
             DayOfWeek.SATURDAY, DayOfWeek.SUNDAY);
 
-    /** Runs once daily at 1:00 AM server time, per spec. */
-    @Scheduled(cron = "0 0 1 * * *")
+    /** Runs every day at 12:00 AM server time, per spec. */
+    @Scheduled(cron = "0 0 0 * * *")
     @Transactional
-    public void generateUpcomingFlights() {
+    public void scheduledGeneration() {
         runGeneration();
     }
 
-    /**
-     * Also runs once on every application startup/redeploy, so a newly
-     * created template doesn't have to wait until 1 AM to produce flights.
-     */
+    /** Also runs on every app startup/redeploy. */
     @EventListener(ApplicationReadyEvent.class)
     public void runOnStartup() {
         runGeneration();
@@ -53,15 +52,26 @@ public class FlightGenerationService {
 
     @Transactional
     public GenerationResult runGeneration() {
-        List<FlightTemplate> templates = flightTemplateRepository.findByActiveTrue();
+        int windowDays = getCurrentWindowDays();
+        List<FlightTemplate> templates = flightTemplateRepository.findByStatus("ACTIVE");
+
         LocalDate today = LocalDate.now();
-        LocalDate windowEnd = today.plusDays(BOOKING_WINDOW_DAYS);
+        LocalDate desiredWindowEnd = today.plusDays(windowDays);
 
         int created = 0;
         int skipped = 0;
 
         for (FlightTemplate template : templates) {
-            for (LocalDate date = today; !date.isAfter(windowEnd); date = date.plusDays(1)) {
+            LocalDate latestExisting = flightRepository
+                    .findLatestGeneratedDateForTemplate(template.getTemplateId());
+
+            // Start filling from the day after the latest existing flight,
+            // or from today if none exist yet.
+            LocalDate fillFrom = (latestExisting != null && latestExisting.isAfter(today))
+                    ? latestExisting.plusDays(1)
+                    : today;
+
+            for (LocalDate date = fillFrom; !date.isAfter(desiredWindowEnd); date = date.plusDays(1)) {
                 if (!matchesFrequency(template.getFrequency(), date)) {
                     continue;
                 }
@@ -75,7 +85,30 @@ public class FlightGenerationService {
                 created++;
             }
         }
-        return new GenerationResult(created, skipped);
+        return new GenerationResult(created, skipped, windowDays);
+    }
+
+    public int getCurrentWindowDays() {
+        List<GenerationSettings> all = generationSettingsRepository.findAll();
+        if (all.isEmpty()) {
+            GenerationSettings defaultSettings = GenerationSettings.builder().windowDays(10).build();
+            generationSettingsRepository.save(defaultSettings);
+            return 10;
+        }
+        return all.get(0).getWindowDays();
+    }
+
+    @Transactional
+    public GenerationSettings updateWindowDays(int days) {
+        if (days != 5 && days != 10 && days != 15 && days != 30) {
+            throw new RuntimeException("Window must be one of: 5, 10, 15, 30 days.");
+        }
+        List<GenerationSettings> all = generationSettingsRepository.findAll();
+        GenerationSettings settings = all.isEmpty()
+                ? GenerationSettings.builder().windowDays(days).build()
+                : all.get(0);
+        settings.setWindowDays(days);
+        return generationSettingsRepository.save(settings);
     }
 
     private boolean matchesFrequency(String frequency, LocalDate date) {
@@ -127,15 +160,15 @@ public class FlightGenerationService {
         flightRepository.save(flight);
     }
 
-    private String formatDuration(java.time.LocalTime dep, java.time.LocalTime arr) {
+    private String formatDuration(LocalTime dep, LocalTime arr) {
         Duration d = Duration.between(dep, arr);
         if (d.isNegative())
-            d = d.plusDays(1); // handles overnight flights
+            d = d.plusDays(1);
         long hours = d.toHours();
         long minutes = d.toMinutes() % 60;
         return hours + "h " + minutes + "m";
     }
 
-    public record GenerationResult(int created, int skipped) {
+    public record GenerationResult(int created, int skipped, int windowDays) {
     }
 }

@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/admin/generated-flights")
+@RequestMapping("/api/admin/all-flights")
 @RequiredArgsConstructor
 public class AdminGeneratedFlightsController {
 
@@ -21,7 +21,7 @@ public class AdminGeneratedFlightsController {
 
     @GetMapping
     public List<Flight> getAll() {
-        return flightRepository.findByTemplateIdIsNotNullOrderByJourneyDateDesc();
+        return flightRepository.findAll();
     }
 
     @GetMapping("/search")
@@ -29,36 +29,44 @@ public class AdminGeneratedFlightsController {
             @RequestParam(required = false) String source,
             @RequestParam(required = false) String destination,
             @RequestParam(required = false) String date,
-            @RequestParam(required = false) String flightNumber) {
+            @RequestParam(required = false) String flightNumber,
+            @RequestParam(required = false) String sourceType) {
 
         LocalDate parsedDate = (date != null && !date.isBlank()) ? LocalDate.parse(date) : null;
-        String src = (source != null && !source.isBlank()) ? source.trim() : null;
-        String dest = (destination != null && !destination.isBlank()) ? destination.trim() : null;
-        String fn = (flightNumber != null && !flightNumber.isBlank()) ? flightNumber.trim() : null;
 
-        return flightRepository.adminSearch(src, dest, parsedDate, fn).stream()
-                .filter(f -> f.getTemplateId() != null)
-                .toList();
+        return flightRepository.unifiedSearch(
+                blankToNull(source), blankToNull(destination), parsedDate,
+                blankToNull(flightNumber), blankToNull(sourceType));
     }
 
     @GetMapping("/dashboard")
     public Map<String, Object> dashboard() {
         Map<String, Object> stats = new HashMap<>();
 
-        stats.put("activeTemplates", flightTemplateRepository.findByActiveTrue().size());
+        stats.put("activeTemplates", flightTemplateRepository.findByStatus("ACTIVE").size());
         stats.put("totalGeneratedFlights", flightRepository.countByTemplateIdIsNotNull());
         stats.put("generatedToday", flightRepository.countGeneratedToday(LocalDate.now()));
 
-        List<Flight> generated = flightRepository.findByTemplateIdIsNotNullOrderByJourneyDateDesc();
+        List<Flight> all = flightRepository.findAll();
 
-        long upcoming = generated.stream().filter(Flight::isBookable).count();
-        long completed = generated.stream().filter(f -> "COMPLETED".equals(f.getStatus())).count();
-        long cancelled = generated.stream().filter(f -> "CANCELLED".equals(f.getStatus())).count();
+        long upcoming = all.stream().filter(Flight::isBookable).count();
+        long completed = all.stream().filter(f -> "COMPLETED".equals(f.getStatus())).count();
+        long cancelled = all.stream().filter(f -> "CANCELLED".equals(f.getStatus())).count();
+        long departed = all.stream().filter(f -> "DEPARTED".equals(f.getStatus())).count();
+        long manual = all.stream().filter(f -> f.getTemplateId() == null).count();
+        long auto = all.stream().filter(f -> f.getTemplateId() != null).count();
 
         stats.put("upcomingFlights", upcoming);
+        stats.put("departedFlights", departed);
         stats.put("completedFlights", completed);
         stats.put("cancelledFlights", cancelled);
+        stats.put("manualFlights", manual);
+        stats.put("autoFlights", auto);
 
         return stats;
+    }
+
+    private String blankToNull(String s) {
+        return (s != null && !s.isBlank()) ? s.trim() : null;
     }
 }

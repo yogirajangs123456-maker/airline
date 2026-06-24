@@ -39,12 +39,10 @@ public class AdminFlightTemplateController {
                 .basePrice(req.getBasePrice())
                 .totalSeats(req.getTotalSeats())
                 .frequency(req.getFrequency())
-                .active(true)
+                .status("ACTIVE")
                 .build();
 
         FlightTemplate saved = flightTemplateRepository.save(template);
-
-        // Generate immediately so the admin sees results right away
         FlightGenerationService.GenerationResult result = flightGenerationService.runGeneration();
 
         return ResponseEntity.ok(Map.of(
@@ -83,22 +81,23 @@ public class AdminFlightTemplateController {
         return ResponseEntity.ok(Map.of("message", "Template deleted successfully"));
     }
 
-    @PatchMapping("/{id}/activate")
-    public ResponseEntity<?> activate(@PathVariable Long id) {
-        FlightTemplate template = flightTemplateRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Template not found"));
-        template.setActive(true);
-        FlightTemplate saved = flightTemplateRepository.save(template);
-        FlightGenerationService.GenerationResult result = flightGenerationService.runGeneration();
-        return ResponseEntity.ok(Map.of("template", saved, "flightsCreated", result.created()));
-    }
+    @PatchMapping("/{id}/status")
+    public ResponseEntity<?> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        String newStatus = body.get("status");
+        if (!List.of("ACTIVE", "SUSPENDED", "INACTIVE").contains(newStatus)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Status must be ACTIVE, SUSPENDED, or INACTIVE"));
+        }
 
-    @PatchMapping("/{id}/deactivate")
-    public ResponseEntity<?> deactivate(@PathVariable Long id) {
         FlightTemplate template = flightTemplateRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Template not found"));
-        template.setActive(false);
-        return ResponseEntity.ok(flightTemplateRepository.save(template));
+        template.setStatus(newStatus);
+        FlightTemplate saved = flightTemplateRepository.save(template);
+
+        if ("ACTIVE".equals(newStatus)) {
+            FlightGenerationService.GenerationResult result = flightGenerationService.runGeneration();
+            return ResponseEntity.ok(Map.of("template", saved, "flightsCreated", result.created()));
+        }
+        return ResponseEntity.ok(Map.of("template", saved));
     }
 
     @PostMapping("/generate-now")
@@ -106,6 +105,7 @@ public class AdminFlightTemplateController {
         FlightGenerationService.GenerationResult result = flightGenerationService.runGeneration();
         return ResponseEntity.ok(Map.of(
                 "flightsCreated", result.created(),
-                "flightsSkipped", result.skipped()));
+                "flightsSkipped", result.skipped(),
+                "windowDays", result.windowDays()));
     }
 }

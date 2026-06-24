@@ -32,15 +32,22 @@ public class FlightTemplate {
     private BigDecimal basePrice;
     private int totalSeats;
 
-    /**
-     * Comma-separated days, e.g. "MON,WED,FRI", or the literal values
-     * "DAILY", "WEEKDAYS", "WEEKENDS".
-     */
     private String frequency;
 
+    /**
+     * ACTIVE → generate flights
+     * SUSPENDED → stop future generation, keep existing flights
+     * INACTIVE → same behavior as SUSPENDED for generation purposes;
+     * kept as a distinct value for admin clarity (soft-deleted/retired)
+     */
     @Builder.Default
-    private boolean active = true;
+    private String status = "ACTIVE";
 
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    @Transient
+    public boolean isGenerationEligible() {
+        return "ACTIVE".equals(status);
+    }
 }
