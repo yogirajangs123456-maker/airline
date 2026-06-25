@@ -50,7 +50,7 @@ public class Flight {
         if (!active) {
             return "CANCELLED";
         }
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
         LocalDateTime departureDateTime = LocalDateTime.of(journeyDate, departureTime);
         LocalDateTime arrivalDateTime = LocalDateTime.of(journeyDate, arrivalTime);
 
